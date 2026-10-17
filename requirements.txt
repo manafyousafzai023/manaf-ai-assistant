@@ -1,0 +1,5 @@
+streamlit
+google-generativeai
+pillow
+pypdf
+streamlit-mic-recorder
