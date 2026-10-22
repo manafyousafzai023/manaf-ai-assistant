@@ -1,108 +1,89 @@
 import streamlit as st
-import google.generativeai as genai
-from PIL import Image
-import pypdf
-from streamlit_mic_recorder import speech_to_text
+from gemini_utils import generate_gemini_response
 
-# Page Setup
-st.set_page_config(page_title="Manaf AI Assistant", page_icon="💬", layout="wide")
+# Page setup
+st.set_page_config(
+    page_title="Manaf AI Assistant",
+    page_icon="💬",
+    layout="wide"
+)
 
-# Configure Gemini API Key
-API_KEY = "YOUR GEMINI KEY"  # Keep your working API key here
-genai.configure(api_key=API_KEY)
-
-# Initialize Gemini Model
-model = genai.GenerativeModel("gemini-3.5-flash")
-
-# Initialize Chat Memory
+# Initialize chat history in session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "chat" not in st.session_state:
-    st.session_state.chat = model.start_chat(history=[])
-
-# Sidebar: Control Panel
+# =============================================================================
+# SIDEBAR / CONTROL PANEL
+# =============================================================================
 with st.sidebar:
     st.title("⚙️ Control Panel")
-    
-    # File Upload Widget
+
+    st.subheader("Upload Image or PDF")
     uploaded_file = st.file_uploader(
-        "Upload Image or PDF", 
-        type=["png", "jpg", "jpeg", "pdf"]
+        "Choose a file",
+        type=["png", "jpg", "jpeg", "pdf"],
+        help="200MB per file • PNG, JPG, PDF"
     )
-    
-    # Reliable Voice Input Widget
-    st.write("🎙️ **Voice Recording**")
-    spoken_text = speech_to_text(
-        start_prompt="🎤 Start Recording", 
-        stop_prompt="⏹️ Stop Recording", 
-        language="en", 
-        key="voice_recorder"
-    )
-    
-    if st.button("🗑️ Clear Chat History"):
+    if uploaded_file:
+        st.success(f"Uploaded: {uploaded_file.name}")
+
+    st.markdown("---")
+
+    st.subheader("🎙️ Voice Recording")
+    if st.button("Start Recording", use_container_width=True):
+        st.info("Voice recording triggered...")
+
+    st.markdown("---")
+
+    # Clear Chat History Button
+    if st.button("🗑️ Clear Chat History", use_container_width=True):
         st.session_state.messages = []
-        st.session_state.chat = model.start_chat(history=[])
         st.rerun()
 
-# Main Header
+# =============================================================================
+# MAIN CHAT INTERFACE
+# =============================================================================
 st.title("💬 Manaf AI Assistant")
 
-# Display Past Messages
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# Render existing chat messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# Capture User Text Input
-text_input = st.chat_input("Type your message here...")
+# User prompt input
+if prompt := st.chat_input("Type your message here..."):
+    # Build the previous conversation (last 10 messages) so the AI remembers
+    history_text = ""
+    for m in st.session_state.messages[-10:]:
+        who = "User" if m["role"] == "user" else "Assistant"
+        history_text += f"{who}: {m['content']}\n"
 
-# Combine Text or Voice Input
-user_prompt = text_input or spoken_text
+    if history_text:
+        full_prompt = (
+            f"Previous conversation:\n{history_text}\n"
+            f"Now answer the user's latest message.\nUser: {prompt}"
+        )
+    else:
+        full_prompt = prompt
 
-if user_prompt:
-    # Display User Prompt
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
+    # Append user message to history
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.markdown(user_prompt)
+        st.markdown(prompt)
 
-    # Generate Response
+    # Get the uploaded file (if any) so it is sent to Gemini
+    file_bytes = uploaded_file.getvalue() if uploaded_file else None
+    mime_type = uploaded_file.type if uploaded_file else None
+
+    # Generate assistant response
     with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
+        with st.spinner("Thinking..."):
+            response = generate_gemini_response(
+                full_prompt,
+                file_bytes=file_bytes,
+                mime_type=mime_type,
+            )
+            st.markdown(response)
 
-        try:
-            # If a file is uploaded, attach it to prompt
-            if uploaded_file is not None:
-                prompt_parts = []
-                file_type = uploaded_file.type
-
-                if "image" in file_type:
-                    image = Image.open(uploaded_file)
-                    st.image(image, caption="Uploaded Image", use_column_width=True)
-                    prompt_parts.append(image)
-
-                elif file_type == "application/pdf":
-                    pdf_reader = pypdf.PdfReader(uploaded_file)
-                    extracted_text = ""
-                    for page in pdf_reader.pages:
-                        extracted_text += page.extract_text() or ""
-                    prompt_parts.append(f"PDF Context:\n{extracted_text}")
-
-                prompt_parts.append(user_prompt)
-                response = model.generate_content(prompt_parts, stream=True)
-                for chunk in response:
-                    full_response += chunk.text
-                    message_placeholder.markdown(full_response + "▌")
-
-            # Standard Chat Memory Mode
-            else:
-                response = st.session_state.chat.send_message(user_prompt, stream=True)
-                for chunk in response:
-                    full_response += chunk.text
-                    message_placeholder.markdown(full_response + "▌")
-
-            message_placeholder.markdown(full_response)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-        except Exception as e:
-            message_placeholder.markdown(f"**Error:** {str(e)}")
+    # Append assistant message to history
+    st.session_state.messages.append({"role": "assistant", "content": response})
