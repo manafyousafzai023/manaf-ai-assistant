@@ -1,5 +1,3 @@
 streamlit
-google-generativeai
-pillow
-pypdf
-streamlit-mic-recorder
+google-genai
+python-dotenv
